@@ -1,6 +1,6 @@
 /*  爆破山脈-終 (AHI 版)
  *  15 秒連打 1 → 按 2 x3 → 每 N 輪連按空白 X 秒
- *  空白階段若偵測 Lib\滿包 → 執行丟山脈雜物（三頁）
+ *  空白階段若偵測 Lib\滿包 或 Lib\包不足 → 執行丟山脈雜物（三頁）
  *  丟完後 3 分 30 秒完全暫停（等地面垃圾消失）再繼續練功
  */
 #Requires AutoHotkey v2.0
@@ -16,7 +16,8 @@ global infoText := "
 【功能】
 1. 連打 1 → 按 2 x3 循環
 2. 每 N 輪連按空白 X 秒
-3. 空白階段偵測滿包 → 自動丟山脈雜物
+3. 空白階段偵測滿包/包不足 → 自動丟山脈雜物
+   （包不足會先等 5 秒再丟）
 4. 丟完後 3 分 30 秒完全暫停再繼續
 
 【備註】
@@ -83,8 +84,10 @@ InitAllCfg() {
     global shfitX, shfitY, dlyDrop, dlyRelease, itv, imgVar
     global bagMinX, bagMinY, fullBagImg, bagShortImg, bagCheckItv
     global pickupCooldownUntil, pickupCooldownMs, lastCooldownDispSec
-    global lockNX, lockNY, confirmIdx, simpleIdx, treasureIdx
+    global lockNX, lockNY
     global lastStuckName, lastStuckX, lastStuckY, stuckCount, skipPageDiscard
+    global bagShortDropDelayMs, lastBagShortWaitSec
+    global spacePrepMs
 
     spamSec := 15
     press2Count := 3
@@ -125,14 +128,14 @@ InitAllCfg() {
     lastCooldownDispSec := -1
     lockNX := 0
     lockNY := 0
-    confirmIdx := 1
-    simpleIdx := 1
-    treasureIdx := 1
     lastStuckName := ""
     lastStuckX := 0
     lastStuckY := 0
     stuckCount := 0
     skipPageDiscard := false
+    bagShortDropDelayMs := 5000
+    lastBagShortWaitSec := -1
+    spacePrepMs := 500
 }
 
 IsTrainActive() {
@@ -286,6 +289,39 @@ IsBagFull() {
     return SearchInGame(fullBagImg, &x, &y, "*30 ")
 }
 
+IsBagShort() {
+    global bagShortImg
+    return SearchInGame(bagShortImg, &x, &y, "*30 ")
+}
+
+NeedsDropDuringSpace() {
+    return IsBagFull() || IsBagShort()
+}
+
+SetDropPhase(msg) {
+    global currentPhase
+    currentPhase := msg
+    state()
+}
+
+WaitBeforeBagShortDrop() {
+    global running, bagShortDropDelayMs, lastBagShortWaitSec
+    deadline := A_TickCount + bagShortDropDelayMs
+    lastBagShortWaitSec := -1
+    while A_TickCount < deadline {
+        if !running
+            return false
+        remain := Ceil((deadline - A_TickCount) / 1000)
+        if remain != lastBagShortWaitSec {
+            lastBagShortWaitSec := remain
+            SetDropPhase("包不足 → " remain " 秒後開始丟垃圾")
+        }
+        if !SleepCheck(100)
+            return false
+    }
+    return true
+}
+
 IsPickupOnCooldown() {
     global pickupCooldownUntil
     return A_TickCount < pickupCooldownUntil
@@ -410,12 +446,22 @@ SearchJunkList(names, &outX, &outY, &outName, &idx) {
     return false
 }
 
-GetConfirmJunkNames() {
+GetYamaJunkNames() {
     names := []
     Loop 13
         names.Push("山雜" A_Index)
+    return names
+}
+
+GetYamaWuNames() {
+    names := []
     Loop 23
         names.Push("山雜武" A_Index)
+    return names
+}
+
+GetYamaShoNames() {
+    names := []
     Loop 2
         names.Push("山雜書" A_Index)
     return names
@@ -432,35 +478,13 @@ GetTreasureNames() {
     return ["山寶1"]
 }
 
-FindConfirmJunk(&outX, &outY, &outName) {
-    global confirmIdx
-    if SearchJunkList(GetConfirmJunkNames(), &outX, &outY, &outName, &confirmIdx)
-        return true
-    confirmIdx := 1
-    return false
-}
-
-FindSimpleJunk(&outX, &outY, &outName) {
-    global simpleIdx
-    if SearchJunkList(GetSimpleJunkNames(), &outX, &outY, &outName, &simpleIdx)
-        return true
-    simpleIdx := 1
-    return false
-}
-
-FindTreasure(&outX, &outY, &outName) {
-    global treasureIdx
-    if SearchJunkList(GetTreasureNames(), &outX, &outY, &outName, &treasureIdx)
-        return true
-    treasureIdx := 1
-    return false
+FindJunkInNames(names, &outX, &outY, &outName) {
+    idx := 1
+    return SearchJunkList(names, &outX, &outY, &outName, &idx)
 }
 
 ResetPageSearchIdx() {
-    global confirmIdx, simpleIdx, treasureIdx, stuckCount, lastStuckName
-    confirmIdx := 1
-    simpleIdx := 1
-    treasureIdx := 1
+    global stuckCount, lastStuckName
     stuckCount := 0
     lastStuckName := ""
 }
@@ -608,57 +632,75 @@ DiscardTreasure(nx, ny) {
     return true
 }
 
-DiscardOneConfirm() {
-    global running, confirmIdx
+DiscardOneConfirmList(names) {
+    global running
     if !running
         return false
     EnsureMouseUp()
-    if !FindConfirmJunk(&nx, &ny, &name)
+    if !FindJunkInNames(names, &nx, &ny, &name)
         return false
     if !DiscardWithConfirm(nx, ny)
         return false
-    confirmIdx++
     return true
 }
 
 DiscardOneSimple() {
-    global running, simpleIdx
+    global running
     if !running
         return false
     EnsureMouseUp()
-    if !FindSimpleJunk(&nx, &ny, &name)
+    if !FindJunkInNames(GetSimpleJunkNames(), &nx, &ny, &name)
         return false
     if !DiscardSimple(nx, ny)
         return false
-    simpleIdx++
     return true
 }
 
 DiscardOneTreasure() {
-    global running, treasureIdx
+    global running
     if !running
         return false
     EnsureMouseUp()
-    if !FindTreasure(&nx, &ny, &name)
+    if !FindJunkInNames(GetTreasureNames(), &nx, &ny, &name)
         return false
     if !DiscardTreasure(nx, ny)
         return false
-    treasureIdx++
     return true
 }
 
-DiscardPageJunk() {
+DiscardPageJunk(pageLabel := "") {
     global running, dlyDrop
+    prefix := pageLabel != "" ? pageLabel " → " : ""
 
     ResetPageSearchIdx()
+    SetDropPhase(prefix "丟山雜")
     Loop {
         if !running
             return false
         if !SleepCheck(dlyDrop)
             return false
-        if !DiscardOneConfirm()
+        if !DiscardOneConfirmList(GetYamaJunkNames())
             break
     }
+    SetDropPhase(prefix "丟山雜武")
+    Loop {
+        if !running
+            return false
+        if !SleepCheck(dlyDrop)
+            return false
+        if !DiscardOneConfirmList(GetYamaWuNames())
+            break
+    }
+    SetDropPhase(prefix "丟山雜書")
+    Loop {
+        if !running
+            return false
+        if !SleepCheck(dlyDrop)
+            return false
+        if !DiscardOneConfirmList(GetYamaShoNames())
+            break
+    }
+    SetDropPhase(prefix "丟山雜裝")
     Loop {
         if !running
             return false
@@ -667,6 +709,7 @@ DiscardPageJunk() {
         if !DiscardOneSimple()
             break
     }
+    SetDropPhase(prefix "丟山寶")
     Loop {
         if !running
             return false
@@ -675,6 +718,7 @@ DiscardPageJunk() {
         if !DiscardOneTreasure()
             break
     }
+    SetDropPhase(prefix "本頁清完")
     return running
 }
 
@@ -683,6 +727,7 @@ OpenAndUnlockBag() {
 
     if !running
         return false
+    SetDropPhase("開啟背包")
     Loop {
         if !running
             return false
@@ -699,6 +744,7 @@ OpenAndUnlockBag() {
     }
     if !lockNX
         return false
+    SetDropPhase("解鎖背包")
     MoveGame(lockNX - 200, lockNY)
     if !SleepCheck(300)
         return false
@@ -718,15 +764,13 @@ OpenAndUnlockBag() {
     return true
 }
 
-DismissBagShortage() {
-    global running, dlyDrop, currentPhase, bagShortImg, itv, skipPageDiscard
-    skipPageDiscard := false
+DismissBagShortagePopup() {
+    global running, dlyDrop, bagShortImg, itv
     if !running
         return false
     if !SearchInGame(bagShortImg, &x, &y, "*30 ")
         return true
-    currentPhase := "包不足 → 點 X+120"
-    state()
+    SetDropPhase("包不足 → 關閉提示")
     if !SleepCheck(200)
         return false
     MoveGame(x + 120, y)
@@ -739,9 +783,20 @@ DismissBagShortage() {
     if !SleepCheck(dlyDrop)
         return false
     MoveGame(0, 0)
+    return true
+}
+
+DismissBagShortage() {
+    global running, skipPageDiscard, currentPhase, bagShortImg
+    skipPageDiscard := false
+    if !running
+        return false
+    if !SearchInGame(bagShortImg, &x, &y, "*30 ")
+        return true
+    if !DismissBagShortagePopup()
+        return false
     skipPageDiscard := true
-    currentPhase := "包不足 → 跳過本頁丟棄"
-    state()
+    SetDropPhase("包不足 → 跳過本頁丟棄")
     return true
 }
 
@@ -749,6 +804,7 @@ SwitchBagPage(offsetX) {
     global lockNX, lockNY, running, dlyDrop, itv
     if !running || !lockNX
         return false
+    SetDropPhase("切換背包分頁")
     MoveGame(lockNX + offsetX, lockNY)
     if !SleepCheck(dlyDrop)
         return false
@@ -766,45 +822,53 @@ SwitchBagPage(offsetX) {
     return true
 }
 
-RunDropOnce() {
+RunDropOnce(reason := "") {
     global running, currentPhase, dlyDrop, dropCount, skipPageDiscard
 
     if !running
         return false
     skipPageDiscard := false
-    currentPhase := "滿包 → 丟山脈雜物"
-    state()
+    KeySpaceUp()
+    ResetPageSearchIdx()
+    if reason == ""
+        reason := IsBagShort() ? "包不足" : "滿包"
     RefreshGameRect()
     if !OpenAndUnlockBag()
         return false
     if !SleepCheck(dlyDrop)
         return false
-    if !DiscardPageJunk()
+    if !DiscardPageJunk("第一頁")
         return false
+    SetDropPhase("準備第二頁")
     if !SwitchBagPage(-160)
         return false
     if !SleepCheck(dlyDrop)
         return false
     if !skipPageDiscard {
-        if !DiscardPageJunk()
+        if !DiscardPageJunk("第二頁")
             return false
     } else {
         skipPageDiscard := false
+        SetDropPhase("第二頁 → 包不足跳過")
     }
+    SetDropPhase("準備第三頁")
     if !SwitchBagPage(-120)
         return false
     if !SleepCheck(dlyDrop)
         return false
     if !skipPageDiscard {
-        if !DiscardPageJunk()
+        if !DiscardPageJunk("第三頁")
             return false
     } else {
         skipPageDiscard := false
+        SetDropPhase("第三頁 → 包不足跳過")
     }
+    SetDropPhase("關閉背包")
     press("X", 100, 0)
     if !SleepCheck(500)
         return false
     dropCount++
+    SetDropPhase(reason " → 丟垃圾完成")
     EnsureMouseUp()
     Key1Up()
     Key2Up()
@@ -812,17 +876,26 @@ RunDropOnce() {
     return true
 }
 
-TryDropOnFullBagDuringSpace() {
+TryDropDuringSpace() {
     global running, bagDropDoneThisSpace, trainPhase, nextTick, nextBagCheck
     global bagCheckItv, currentPhase, spaceSec
 
-    if bagDropDoneThisSpace || !IsBagFull()
+    if bagDropDoneThisSpace || !NeedsDropDuringSpace()
         return false
 
+    dropReason := IsBagShort() ? "包不足" : "滿包"
     bagDropDoneThisSpace := true
+    trainPhase := "drop"
     KeySpaceUp()
     SetTimer(TrainTick, 0)
-    ok := RunDropOnce()
+    if dropReason == "包不足" {
+        if !WaitBeforeBagShortDrop() {
+            SetTimer(TrainTick, 10)
+            return false
+        }
+        DismissBagShortagePopup()
+    }
+    ok := RunDropOnce(dropReason)
     SetTimer(TrainTick, 10)
     if !running
         return ok
@@ -830,11 +903,7 @@ TryDropOnFullBagDuringSpace() {
     if ok {
         BeginCooldown()
     } else {
-        trainPhase := "space"
-        currentPhase := "連按空白 (" spaceSec " 秒)"
-        nextTick := A_TickCount
-        nextBagCheck := A_TickCount + bagCheckItv
-        state()
+        BeginSpam1()
     }
     return ok
 }
@@ -881,7 +950,7 @@ BeginSpace() {
     nextBagCheck := A_TickCount
     currentPhase := "連按空白 (" spaceSec " 秒)"
     state()
-    TryDropOnFullBagDuringSpace()
+    TryDropDuringSpace()
 }
 
 NeedSpaceBreak() {
@@ -901,6 +970,10 @@ StartTrain() {
     }
     if !FileExist(ImgPath(fullBagImg)) {
         FlashMsg("缺少 Lib\" fullBagImg)
+        return
+    }
+    if !FileExist(ImgPath(bagShortImg)) {
+        FlashMsg("缺少 Lib\" bagShortImg)
         return
     }
     if !FileExist(ImgPath("山雜1")) {
@@ -945,7 +1018,7 @@ StopTrain() {
 
 TrainTick() {
     global running, trainPhase, spamEndTick, spaceEndTick, nextTick, nextBagCheck, bagCheckItv
-    global press2Left, press2Step, loopCount, spamInterval, currentPhase
+    global press2Left, press2Step, loopCount, spamInterval, currentPhase, spacePrepMs
     global key1Held, key2Held, keySpaceHeld
 
     if !IsTrainActive()
@@ -999,9 +1072,15 @@ TrainTick() {
             state()
             if !IsTrainActive()
                 return
-            if NeedSpaceBreak()
+            if NeedSpaceBreak() {
+                currentPhase := "等待撿物 (0.5 秒)"
+                state()
+                if !SleepCheck(spacePrepMs)
+                    return
+                if !IsTrainActive()
+                    return
                 BeginSpace()
-            else
+            } else
                 BeginSpam1()
             return
         }
@@ -1011,9 +1090,13 @@ TrainTick() {
     }
 
     if trainPhase == "space" {
+        if bagDropDoneThisSpace {
+            KeySpaceUp()
+            return
+        }
         if now >= nextBagCheck {
             nextBagCheck := now + bagCheckItv
-            TryDropOnFullBagDuringSpace()
+            TryDropDuringSpace()
             if !IsTrainActive()
                 return
         }
@@ -1043,13 +1126,12 @@ state() {
         : "視窗: 尚未定位"
 
     SetStatusText("【現況】`r`n"
-        . "設定: 1 連打 " spamSec " 秒 → 2 x" press2Count "`r`n"
-        . "每 " spaceEveryN " 輪 → 空白 " spaceSec " 秒`r`n"
-        . "空白時滿包 → 自動丟山脈雜物`r`n"
-        . "丟完後 3 分 30 秒完全暫停`r`n"
         . "狀態: " currentStatus "`r`n"
         . "階段: " currentPhase "`r`n"
         . "練功: " loopCount " 輪  丟垃圾: " dropCount " 次`r`n"
+        . "────────────────`r`n"
+        . "設定: 1 連打 " spamSec " 秒 → 2 x" press2Count "`r`n"
+        . "每 " spaceEveryN " 輪 → 空白 " spaceSec " 秒`r`n"
         . posInfo)
 }
 

@@ -271,6 +271,9 @@ SetPanelTopMost() {
 
 RefreshGamePos(*) {
     global winPosSet, winX, winY, win_width, win_height
+    oldSet := winPosSet
+    oldW := win_width
+    oldH := win_height
     hwnd := GetGameHwnd()
     if hwnd {
         WinGetPos(&winX, &winY, &win_width, &win_height, hwnd)
@@ -280,13 +283,18 @@ RefreshGamePos(*) {
     } else {
         winPosSet := 0
     }
-    try state()
+    if winPosSet != oldSet || win_width != oldW || win_height != oldH
+        try state()
 }
 
 SetStatusText(text) {
     global statusEdit
-    if IsObject(statusEdit)
-        statusEdit.Value := text
+    if !IsObject(statusEdit)
+        return
+    firstVisible := SendMessage(0x00CE, 0, 0, statusEdit)
+    statusEdit.Value := text
+    if firstVisible > 0
+        SendMessage(0x00B6, firstVisible, 0, statusEdit)
     SetPanelTopMost()
 }
 
