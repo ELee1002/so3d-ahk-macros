@@ -1,0 +1,15 @@
+---
+description: 自寫巨集 AHK v2 開發規範
+globs: "**/*.ahk"
+alwaysApply: false
+---
+
+# AHK v2 開發規範（自寫巨集）
+
+工作目錄：`自寫巨集`  
+技術棧：**AutoHotkey v2.0** + **AHI**
+
+- `#Requires AutoHotkey v2.0` + `#Include Common.ahk`
+- 希望視窗：`SO3DPlus.exe` / `TW_LIVE` / `ahk_class SO3D`
+- F2 即時停止：`ReleaseAllKeys()` + 關閉計時器
+- 多行字串用 `.` 連接；數字用 `Integer()` / `IsNumber()`
