@@ -1,4 +1,5 @@
-/*  爆破山脈-終 (AHI 版)
+/*  爆破山脈-終test (AHI 版)
+ *  同 爆破山脈-終，冷卻期間額外偵測 Lib\綠袋子 並點擊
  *  15 秒連打 1 → 按 2 x3 → 每 N 輪連按空白 X 秒
  *  空白階段若偵測 Lib\滿包 或 Lib\包不足 → 執行丟山脈雜物（三頁）
  *  丟完後 3 分 30 秒完全暫停（等地面垃圾消失）再繼續練功
@@ -19,6 +20,7 @@ global infoText := "
 3. 空白階段偵測滿包/包不足 → 自動丟山脈雜物
    （包不足會先等 5 秒再丟）
 4. 丟完後 3 分 30 秒完全暫停再繼續
+5. 【test】冷卻期間偵測綠袋子並點擊
 
 【備註】
 F2 立即停止
@@ -88,6 +90,7 @@ InitAllCfg() {
     global lastStuckName, lastStuckX, lastStuckY, stuckCount, skipPageDiscard
     global bagShortDropDelayMs, lastBagShortWaitSec
     global spacePrepMs
+    global greenBagImg, greenBagCheckItv, greenBagDoneThisCooldown, nextGreenBagCheck
 
     spamSec := 15
     press2Count := 3
@@ -136,6 +139,10 @@ InitAllCfg() {
     bagShortDropDelayMs := 5000
     lastBagShortWaitSec := -1
     spacePrepMs := 500
+    greenBagImg := "綠袋子"
+    greenBagCheckItv := 500
+    greenBagDoneThisCooldown := false
+    nextGreenBagCheck := 0
 }
 
 IsTrainActive() {
@@ -351,15 +358,52 @@ StartPickupCooldown() {
 }
 
 BeginCooldown() {
-    global trainPhase, running
+    global trainPhase, running, greenBagDoneThisCooldown, nextGreenBagCheck
     if !running
         return
     Key1Up()
     Key2Up()
     KeySpaceUp()
     ForceReleaseAll()
+    greenBagDoneThisCooldown := false
+    nextGreenBagCheck := A_TickCount
     trainPhase := "cooldown"
     StartPickupCooldown()
+}
+
+ClickGreenBag(x, y) {
+    global running, dlyDrop, itv
+    if !running
+        return false
+    MoveGame(x, y)
+    if !SleepCheck(dlyDrop)
+        return false
+    MouseDown()
+    if !SleepCheck(itv)
+        return false
+    MouseUp()
+    if !SleepCheck(dlyDrop)
+        return false
+    MoveGame(0, 0)
+    EnsureMouseUp()
+    return true
+}
+
+TryClickGreenBagDuringCooldown() {
+    global running, greenBagDoneThisCooldown, nextGreenBagCheck, greenBagCheckItv, greenBagImg
+    if !running || greenBagDoneThisCooldown
+        return false
+    if A_TickCount < nextGreenBagCheck
+        return false
+    nextGreenBagCheck := A_TickCount + greenBagCheckItv
+    if !SearchInGame(greenBagImg, &x, &y, "*30 ")
+        return false
+    SetDropPhase("冷卻中 → 點擊綠袋子")
+    if !ClickGreenBag(x, y)
+        return false
+    greenBagDoneThisCooldown := true
+    UpdatePickupCooldownPhase()
+    return true
 }
 
 MoveGame(x, y) {
@@ -764,30 +808,6 @@ OpenAndUnlockBag() {
     return true
 }
 
-CloseBag() {
-    global running, dlyDrop
-
-    if !running
-        return false
-    SetDropPhase("關閉背包")
-    press("I", 500, 0)
-    if !SleepCheck(200)
-        return false
-    if SearchInGame("鎖1", &x, &y, "*30 ") {
-        press("Enter", 100, 0)
-        if !SleepCheck(200)
-            return false
-        press("I", 500, 0)
-        if !SleepCheck(200)
-            return false
-    }
-    if !SleepCheck(dlyDrop)
-        return false
-    MoveGame(0, 0)
-    EnsureMouseUp()
-    return true
-}
-
 DismissBagShortagePopup() {
     global running, dlyDrop, bagShortImg, itv
     if !running
@@ -887,7 +907,9 @@ RunDropOnce(reason := "") {
         skipPageDiscard := false
         SetDropPhase("第三頁 → 包不足跳過")
     }
-    if !CloseBag()
+    SetDropPhase("關閉背包")
+    press("X", 100, 0)
+    if !SleepCheck(500)
         return false
     dropCount++
     SetDropPhase(reason " → 丟垃圾完成")
@@ -899,24 +921,28 @@ RunDropOnce(reason := "") {
 }
 
 TryDropDuringSpace() {
-    global running, bagDropDoneThisSpace, trainPhase, nextTick, nextBagCheck
-    global bagCheckItv, currentPhase, spaceSec
+    global running, bagDropDoneThisSpace, trainPhase, nextBagCheck, bagCheckItv, spaceSec
 
-    if bagDropDoneThisSpace || !NeedsDropDuringSpace()
+    if bagDropDoneThisSpace
+        return false
+    KeySpaceUp()
+    if !NeedsDropDuringSpace()
         return false
 
     dropReason := IsBagShort() ? "包不足" : "滿包"
     bagDropDoneThisSpace := true
     trainPhase := "drop"
-    KeySpaceUp()
+    SetDropPhase(dropReason " → 準備丟垃圾")
     SetTimer(TrainTick, 0)
+
     if dropReason == "包不足" {
         if !WaitBeforeBagShortDrop() {
-            SetTimer(TrainTick, 10)
+            FailDropDuringSpace(true)
             return false
         }
-        DismissBagShortagePopup()
     }
+    DismissBagShortagePopup()
+
     ok := RunDropOnce(dropReason)
     SetTimer(TrainTick, 10)
     if !running
@@ -925,9 +951,24 @@ TryDropDuringSpace() {
     if ok {
         BeginCooldown()
     } else {
+        bagDropDoneThisSpace := false
         BeginSpam1()
     }
     return ok
+}
+
+FailDropDuringSpace(resumeSpace := false) {
+    global bagDropDoneThisSpace, trainPhase, nextBagCheck, bagCheckItv, spaceSec, currentPhase
+    bagDropDoneThisSpace := false
+    SetTimer(TrainTick, 10)
+    if resumeSpace {
+        trainPhase := "space"
+        currentPhase := "連按空白 (" spaceSec " 秒)"
+        nextBagCheck := A_TickCount + bagCheckItv
+        state()
+    } else {
+        BeginSpam1()
+    }
 }
 
 BeginSpam1() {
@@ -982,6 +1023,7 @@ NeedSpaceBreak() {
 
 StartTrain() {
     global running, currentStatus, loopCount, dropCount, pickupCooldownUntil, lastCooldownDispSec
+    global greenBagDoneThisCooldown, nextGreenBagCheck, greenBagImg, bagShortImg, fullBagImg
     if running
         return
     if !ActivateGame() {
@@ -1010,11 +1052,17 @@ StartTrain() {
         FlashMsg("缺少 Lib\max")
         return
     }
+    if !FileExist(ImgPath(greenBagImg)) {
+        FlashMsg("缺少 Lib\" greenBagImg)
+        return
+    }
     SetTimer(EnsureStopped, 0)
     loopCount := 0
     dropCount := 0
     pickupCooldownUntil := 0
     lastCooldownDispSec := -1
+    greenBagDoneThisCooldown := false
+    nextGreenBagCheck := 0
     running := true
     currentStatus := "運行中"
     BeginSpam1()
@@ -1050,6 +1098,7 @@ TrainTick() {
 
     if trainPhase == "cooldown" {
         if IsPickupOnCooldown() {
+            TryClickGreenBagDuringCooldown()
             UpdatePickupCooldownPhase()
             return
         }
@@ -1112,12 +1161,9 @@ TrainTick() {
     }
 
     if trainPhase == "space" {
-        if bagDropDoneThisSpace {
-            KeySpaceUp()
-            return
-        }
         if now >= nextBagCheck {
             nextBagCheck := now + bagCheckItv
+            KeySpaceUp()
             TryDropDuringSpace()
             if !IsTrainActive()
                 return
@@ -1154,6 +1200,7 @@ state() {
         . "────────────────`r`n"
         . "設定: 1 連打 " spamSec " 秒 → 2 x" press2Count "`r`n"
         . "每 " spaceEveryN " 輪 → 空白 " spaceSec " 秒`r`n"
+        . "test: 冷卻中偵測綠袋子`r`n"
         . posInfo)
 }
 
@@ -1163,7 +1210,7 @@ InitApp() {
     SC2 := GetKeySC("2")
     SCSpace := GetKeySC("Space")
     ini()
-    BuildMacroPanel("爆破山脈-終", infoText, hotkeyText, StartTrain, StopTrain)
+    BuildMacroPanel("爆破山脈-終test", infoText, hotkeyText, StartTrain, StopTrain)
     state()
     SetTimer(RefreshGamePos, 500)
 }
