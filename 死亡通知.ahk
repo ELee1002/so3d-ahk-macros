@@ -35,7 +35,7 @@ global hotkeyText := "
 【熱鍵】
 Ctrl+Z 開始
 Ctrl+X 暫停
-Ctrl+R 重載
+Ctrl+C 重載
 Ctrl+Esc 關閉
 )"
 
@@ -44,7 +44,7 @@ return
 
 ^z::StartWatch()
 ^x::StopWatch()
-^r::{
+^c::{
     StopWatch()
     Reload
 }
