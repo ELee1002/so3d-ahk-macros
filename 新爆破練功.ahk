@@ -16,6 +16,8 @@ global clickHoldMs := 50
 global click2HoldMs := 80
 global click2GapMs := 150
 global slotSwitchMs := 400
+global waitAfter2Step := 100
+global waitAfter2Ms := Max(0, readNum("train_after2_ms", 400))
 global loopCount := 0
 global currentPhase := "待機"
 
@@ -45,16 +47,18 @@ global infoText := "
 2. 錨點 X+30 每 0.25 秒點一次（點擊1）共 15 秒
 3. 先放開再等待，避免拖拽
 4. 再 +30 點 3 次（點擊2）
-5. 回到步驟 2
+5. 等待 X ms 後再點擊1
 
 【備註】
 需 Lib\快捷鍵錨點.bmp
++/- 調整 X（每次 100ms）
 F2 立即停止並放開滑鼠
 )"
 global hotkeyText := "
 (
 【熱鍵】
 F1/F2 或下方按鈕
++/- 調點2後等待
 F3 重載  Ctrl+Esc 關
 )"
 
@@ -67,6 +71,11 @@ F3::{
     StopTrain()
     Reload
 }
+-::
+NumpadSub::AdjustWaitAfter2(-1)
+=::
++=::
+NumpadAdd::AdjustWaitAfter2(1)
 ^Esc::ExitApp
 
 OnExit(*) {
@@ -193,13 +202,23 @@ BeginClick1() {
     state()
 }
 
-BeginGap(nextPhase, label) {
-    global trainPhase, nextTick, currentPhase, running, slotSwitchMs
+AdjustWaitAfter2(dir) {
+    global waitAfter2Ms, waitAfter2Step, trainPhase, nextTick
+    old := waitAfter2Ms
+    waitAfter2Ms := Max(0, waitAfter2Ms + dir * waitAfter2Step)
+    writeCfg("train_after2_ms", waitAfter2Ms)
+    if trainPhase == "gap21"
+        nextTick := A_TickCount + Max(0, nextTick - A_TickCount + (waitAfter2Ms - old))
+    state()
+}
+
+BeginGap(nextPhase, label, delayMs) {
+    global trainPhase, nextTick, currentPhase, running
     if !running
         return
     MouseUp()
     trainPhase := nextPhase
-    nextTick := A_TickCount + slotSwitchMs
+    nextTick := A_TickCount + Max(0, delayMs)
     currentPhase := label
     state()
 }
@@ -258,6 +277,7 @@ TrainTick() {
     global trainPhase, spamEndTick, nextTick, press2Left, clickStep
     global loopCount, spamInterval, clickHoldMs, click2HoldMs, click2GapMs
     global currentPhase, click1X, click1Y, click2X, click2Y, spamSec
+    global slotSwitchMs, waitAfter2Ms
 
     if !IsTrainActive()
         return
@@ -269,7 +289,7 @@ TrainTick() {
             MouseUp()
             if !IsTrainActive()
                 return
-            BeginGap("gap12", "放開後等待，再點擊2")
+            BeginGap("gap12", "放開後等待，再點擊2", slotSwitchMs)
             return
         }
         if now < nextTick
@@ -338,7 +358,7 @@ TrainTick() {
             state()
             if !IsTrainActive()
                 return
-            BeginGap("gap21", "放開後等待，再點擊1")
+            BeginGap("gap21", "點2後等待 " waitAfter2Ms " ms", waitAfter2Ms)
             return
         }
         clickStep := "down"
@@ -351,7 +371,7 @@ TrainTick() {
 state() {
     global currentStatus, currentPhase, loopCount, spamSec, press2Count
     global win_width, win_height, winPosSet, clientW, clientH
-    global anchorSet, anchorX, anchorY, click1X, click2X
+    global anchorSet, anchorX, anchorY, click1X, click2X, waitAfter2Ms
 
     posInfo := winPosSet
         ? "視窗: " win_width "x" win_height "  客戶區: " clientW "x" clientH
@@ -362,6 +382,7 @@ state() {
 
     SetStatusText("【現況】`r`n"
         . "設定: 點1 " spamSec " 秒/0.25s → 點2 x" press2Count "`r`n"
+        . "點2後等待 X: " waitAfter2Ms " ms`r`n"
         . "狀態: " currentStatus "`r`n"
         . "階段: " currentPhase "`r`n"
         . "已完成: " loopCount " 輪`r`n"

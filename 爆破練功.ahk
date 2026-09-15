@@ -1,5 +1,5 @@
 /*  爆破練功 (AHI 版)
- *  功能1：高速連打 1 共 15 秒 → 按 2 共 3 次 → 循環
+ *  功能1：每 0.3 秒按 1 共 15 秒 → 按 2 共 3 次 → 循環
  */
 #Requires AutoHotkey v2.0
 #Include Lib\AutoHotInterception.ahk
@@ -11,7 +11,8 @@ LoadCommonCfg()
 
 global spamSec := 15
 global press2Count := 3
-global spamInterval := 10
+global spamInterval := 300
+global key1HoldMs := 50
 global loopCount := 0
 global currentPhase := "待機"
 
@@ -30,7 +31,7 @@ global infoText := "
 (
 【功能1】
 循環執行：
-1. 高速連打 1 共 15 秒
+1. 每 0.3 秒按一次 1 共 15 秒
 2. 按 2 共 3 次
 3. 回到步驟 1
 
@@ -177,7 +178,7 @@ StopTrain() {
 
 TrainTick() {
     global running, trainPhase, spamEndTick, nextTick
-    global press2Left, press2Step, loopCount, spamInterval, currentPhase
+    global press2Left, press2Step, loopCount, spamInterval, key1HoldMs, currentPhase
 
     if !IsTrainActive()
         return
@@ -198,13 +199,17 @@ TrainTick() {
             return
         if !IsTrainActive()
             return
-        if !key1Held
+        if !key1Held {
             Key1Down()
-        else
-            Key1Up()
+            if !IsTrainActive()
+                return
+            nextTick := now + key1HoldMs
+            return
+        }
+        Key1Up()
         if !IsTrainActive()
             return
-        nextTick := now + spamInterval
+        nextTick := now + Max(1, spamInterval - key1HoldMs)
         return
     }
 
@@ -250,7 +255,7 @@ state() {
         : "視窗: 尚未定位"
 
     SetStatusText("【現況】`r`n"
-        . "設定: 1 連打 " spamSec " 秒 → 2 x" press2Count "`r`n"
+        . "設定: 每 0.3 秒按 1 共 " spamSec " 秒 → 2 x" press2Count "`r`n"
         . "狀態: " currentStatus "`r`n"
         . "階段: " currentPhase "`r`n"
         . "已完成: " loopCount " 輪`r`n"
