@@ -22,14 +22,24 @@ global trainStopCount := 4
 global imgVar := 30
 global itv := 300
 global wrongEatTimeoutMs := 20000
+global wrongEatAppearMs := 6000
+global lateWrongEatMs := 5000
+global eatHoldMs := 120
+global eatGapMs := 150
+global trainKeyHoldMs := 60
+global trainKeyGapMs := 120
+global eatPressTries := 3
+global activateWaitMs := 1500
+global eatLogPath := A_ScriptDir "\吃小幫手_log.txt"
 
 global infoText := "
 (
 【功能】
 獨立倒數，可與練功巨集同時開
+Ctrl+Z 當下先喝一次再倒數
 小幫手 12 小時
 剩 1 分鐘自動按快捷 0
-喝完後重算 12 小時
+每次按下 0（含 F4、啟動先喝）都重算 12 小時
 
 【備註】
 快捷 0 放小幫手藥水
@@ -37,6 +47,8 @@ global infoText := "
 按 0 後若跳出誤吃：點確認 → 目錄 → 幫手 → start → Enter
 需 Lib\誤吃、目錄、幫手、start（找不到再找 start2）
 F4 現在喝並重置倒數
+按 0 前會先確認遊戲在前景，最多試 3 次
+每步時間記在 吃小幫手_log.txt
 第一次若沒紀錄，先假設滿 12 小時
 )"
 global hotkeyText := "
@@ -45,7 +57,7 @@ global hotkeyText := "
 Ctrl+Z 開始  Ctrl+X 停止
 或下方按鈕
 F4 現在喝並重置
-F3 重載  Ctrl+Esc 關
+Ctrl+F3 重載  Ctrl+Esc 關
 )"
 
 InitApp()
@@ -53,7 +65,7 @@ return
 
 ^z::StartHelper()
 ^x::StopHelper()
-F3::{
+^F3::{
     StopHelper()
     Reload
 }
@@ -99,25 +111,26 @@ ResetExpireFromNow() {
 }
 
 StartHelper() {
-    global running, currentStatus, currentPhase, lastRemainDisp
+    global running, currentStatus, currentPhase, lastRemainDisp, helperExpire
     if running
         return
-    if !ActivateGame() {
-        currentStatus := "找不到遊戲視窗"
-        state()
-        FlashMsg("找不到希望視窗")
-        return
-    }
+    gameFound := ActivateGame()
     LoadHelperExpire()
-    if !IsValidStamp(helperExpire) {
-        ResetExpireFromNow()
-        currentPhase := "無紀錄，已假設滿 12 小時"
-    } else {
-        currentPhase := "倒數中"
-    }
     lastRemainDisp := -1
     running := true
-    currentStatus := "運行中"
+    currentStatus := gameFound ? "啟動先喝一次" : "找不到遊戲視窗"
+    currentPhase := "啟動先喝一次"
+    state()
+
+    EatHelper("啟動先喝一次")
+
+    ; 喝成功會重設 12 小時；失敗時也要有到期時間，避免每秒重複喝
+    if !IsValidStamp(helperExpire) {
+        ResetExpireFromNow()
+        currentPhase := "沒喝到，先假設滿 12 小時"
+    }
+    lastRemainDisp := -1
+    currentStatus := gameFound ? "倒數中" : "倒數中（找不到遊戲視窗）"
     SetTimer(HelperTick, 1000)
     state()
 }
@@ -197,22 +210,35 @@ ClickGame(x, y, holdMs := 0) {
     return SleepCheck(300)
 }
 
+WaitWrongEatAppear(timeoutMs, label := "等誤吃") {
+    global currentPhase
+    deadline := A_TickCount + timeoutMs
+    while running && A_TickCount < deadline {
+        currentPhase := label
+        state()
+        if SearchInGame("誤吃", &wx, &wy, "*100 ")
+            return true
+        if !SleepCheck(200)
+            return false
+    }
+    return false
+}
+
 HandleWrongEat() {
-    global currentPhase, wrongEatTimeoutMs
+    global currentPhase, wrongEatTimeoutMs, wrongEatAppearMs
     if !SleepCheck(300)
         return false
 
-    startTick := A_TickCount
-    waitForWrongEatMs := 2500
-    deadline := startTick + wrongEatTimeoutMs
-    sawWrongEat := false
+    if !WaitWrongEatAppear(wrongEatAppearMs)
+        return running
+
+    deadline := A_TickCount + wrongEatTimeoutMs
     useAltConfirm := false
 
     while running && A_TickCount < deadline {
         currentPhase := "找誤吃"
         state()
         if SearchInGame("誤吃", &wx, &wy, "*100 ") {
-            sawWrongEat := true
             currentPhase := "點誤吃確認"
             state()
             ox := useAltConfirm ? 120 : 70
@@ -222,15 +248,6 @@ HandleWrongEat() {
             if !SleepCheck(400)
                 return false
             continue
-        }
-
-        if !sawWrongEat {
-            if A_TickCount - startTick < waitForWrongEatMs {
-                if !SleepCheck(200)
-                    return false
-                continue
-            }
-            return true
         }
 
         MoveGame(0, 0)
@@ -305,55 +322,137 @@ DrinkNow() {
     }
 }
 
+LogEat(msg) {
+    global eatLogPath
+    try FileAppend(FormatTime(A_Now, "MM-dd HH:mm:ss") "  [" A_TickCount "]  " msg "`r`n", eatLogPath, "UTF-8")
+}
+
+EnsureGameActive() {
+    global running, activateWaitMs
+    hwnd := GetGameHwnd()
+    if !hwnd
+        return false
+    if WinActive("ahk_id " hwnd)
+        return true
+    try WinActivate("ahk_id " hwnd)
+    deadline := A_TickCount + activateWaitMs
+    while running && A_TickCount < deadline {
+        if WinActive("ahk_id " hwnd)
+            return true
+        Sleep(50)
+    }
+    return WinActive("ahk_id " hwnd) ? true : false
+}
+
+PressEatKey() {
+    global currentPhase, eatHoldMs, eatGapMs, eatPressTries
+    Loop eatPressTries {
+        n := A_Index
+        if !EnsureGameActive() {
+            currentPhase := "等遊戲到前景（第 " n " 次）"
+            state()
+            LogEat("遊戲不在前景，放棄按 0（第 " n " 次）")
+            if !SleepCheck(300)
+                return false
+            continue
+        }
+        currentPhase := "按快捷 0（第 " n " 次）"
+        state()
+        t0 := A_TickCount
+        LogEat("送出 0 down（第 " n " 次）")
+        ok := press("0", eatHoldMs, eatGapMs)
+        used := A_TickCount - t0
+        LogEat((ok ? "0 已送完" : "0 被中斷") "，耗時 " used " ms")
+        currentPhase := (ok ? "0 已送出" : "0 被中斷") "，" used " ms"
+        state()
+        if ok
+            return true
+    }
+    return false
+}
+
+; 用 AHI 從驅動層送，AHK 的 Send 會被其他腳本的熱鍵忽略
+SendTrainKey(key) {
+    global trainKeyHoldMs, trainKeyGapMs
+    EnsureGameActive()
+    return press(key, trainKeyHoldMs, trainKeyGapMs)
+}
+
+SendTrainStop() {
+    global currentPhase, trainStopCount, trainPauseMs
+    currentPhase := "F2 停止練功"
+    state()
+    Loop trainStopCount {
+        if !SendTrainKey("F2")
+            return false
+    }
+    LogEat("F2 x" trainStopCount " 已用 AHI 送出")
+    return SleepCheck(trainPauseMs)
+}
+
+SendTrainResume() {
+    global currentPhase, trainResumeMs
+    currentPhase := "F1 重開練功"
+    state()
+    if !SleepCheck(trainResumeMs)
+        return false
+    ok := SendTrainKey("F1")
+    LogEat(ok ? "F1 已用 AHI 送出" : "F1 送出被中斷")
+    return ok
+}
+
 EatHelper(reason := "自動喝") {
-    global running, eating, currentPhase, lastRemainDisp, trainPauseMs, trainResumeMs, trainStopCount
+    global running, eating, currentPhase, lastRemainDisp, lateWrongEatMs
+    global trainStopCount, trainPauseMs, helperExpire
     if eating
         return
     eating := true
     currentPhase := reason
     state()
+    LogEat("=== 開始：" reason " ===")
     if !ActivateGame() {
+        LogEat("ActivateGame 失敗，整個流程取消")
         eating := false
+        state()
         return
     }
 
-    currentPhase := "F2 停止練功"
-    state()
-    Loop trainStopCount {
-        Send("{F2}")
-        if !SleepCheck(80)
-            break
-    }
-    if !SleepCheck(trainPauseMs) {
+    if !SendTrainStop() {
+        LogEat("F2 停練功被中斷，流程取消")
         eating := false
+        state()
         return
     }
+    LogEat("已等 " trainPauseMs " ms，開始按 0")
 
-    currentPhase := "按快捷 0"
-    state()
-    ok := press("0", 500, 100)
+    ok := PressEatKey()
     if ok {
         ResetExpireFromNow()
+        lastRemainDisp := -1
+        LogEat("已重算 12 小時，到期 " helperExpire)
+        state()
         ok := HandleWrongEat()
     }
 
     Loop 2
         MouseUp()
 
-    if running {
-        currentPhase := "F1 重開練功"
-        state()
-        if !SleepCheck(trainResumeMs) {
-            eating := false
-            lastRemainDisp := -1
-            state()
-            return
+    if running && SendTrainResume() {
+        ; 練功已恢復，但誤吃可能因 lag 才跳出，再確認一次
+        if WaitWrongEatAppear(lateWrongEatMs, "復原後再確認誤吃") {
+            if SendTrainStop() {
+                ok := HandleWrongEat()
+                Loop 2
+                    MouseUp()
+                if running
+                    SendTrainResume()
+            }
         }
-        Send("{F1}")
     }
 
     lastRemainDisp := -1
-    currentPhase := ok ? "已按 0，練功已重開" : "按 0 失敗，已試著重開練功"
+    currentPhase := ok ? "已按 0，練功已重開" : "誤吃未處理完，已試著重開練功"
+    LogEat("=== 結束：" currentPhase " ===")
     eating := false
     state()
 }
