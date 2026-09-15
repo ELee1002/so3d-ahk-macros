@@ -18,6 +18,7 @@ global currentPhase := "待機"
 global eating := false
 global trainPauseMs := 500
 global trainResumeMs := 300
+global trainStopCount := 4
 global imgVar := 30
 global itv := 300
 global wrongEatTimeoutMs := 20000
@@ -198,22 +199,40 @@ ClickGame(x, y, holdMs := 0) {
 
 HandleWrongEat() {
     global currentPhase, wrongEatTimeoutMs
-    if !SleepCheck(500)
-        return false
-    currentPhase := "檢查誤吃"
-    state()
     if !SleepCheck(300)
         return false
-    if !SearchInGame("誤吃", &wx, &wy, "*100 ")
-        return true
 
-    currentPhase := "點誤吃確認"
-    state()
-    if !ClickGame(wx + 70, wy + 90)
-        return false
+    startTick := A_TickCount
+    waitForWrongEatMs := 2500
+    deadline := startTick + wrongEatTimeoutMs
+    sawWrongEat := false
+    useAltConfirm := false
 
-    deadline := A_TickCount + wrongEatTimeoutMs
     while running && A_TickCount < deadline {
+        currentPhase := "找誤吃"
+        state()
+        if SearchInGame("誤吃", &wx, &wy, "*100 ") {
+            sawWrongEat := true
+            currentPhase := "點誤吃確認"
+            state()
+            ox := useAltConfirm ? 120 : 70
+            if !ClickGame(wx + ox, wy + 90)
+                return false
+            useAltConfirm := !useAltConfirm
+            if !SleepCheck(400)
+                return false
+            continue
+        }
+
+        if !sawWrongEat {
+            if A_TickCount - startTick < waitForWrongEatMs {
+                if !SleepCheck(200)
+                    return false
+                continue
+            }
+            return true
+        }
+
         MoveGame(0, 0)
         if !SleepCheck(300)
             return false
@@ -287,7 +306,7 @@ DrinkNow() {
 }
 
 EatHelper(reason := "自動喝") {
-    global running, eating, currentPhase, lastRemainDisp, trainPauseMs, trainResumeMs
+    global running, eating, currentPhase, lastRemainDisp, trainPauseMs, trainResumeMs, trainStopCount
     if eating
         return
     eating := true
@@ -300,7 +319,11 @@ EatHelper(reason := "自動喝") {
 
     currentPhase := "F2 停止練功"
     state()
-    Send("{F2}")
+    Loop trainStopCount {
+        Send("{F2}")
+        if !SleepCheck(80)
+            break
+    }
     if !SleepCheck(trainPauseMs) {
         eating := false
         return
