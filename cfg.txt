@@ -9,6 +9,7 @@ drop_delay=50
 release_delay=50
 bag_minX=80
 bag_minY=80
+discord_webhook=https://discordapp.com/api/webhooks/1549369911187603466/jyfYBpBuVt30lUNAVjT92Wi1WEKi_DCxBNvH66oax0k8nYL2pZgfypBvO48WkMKKf_Sa
 
 
 
@@ -73,8 +74,7 @@ bag_minY=80
 
 
 
-
-train_space_rounds=1
+train_space_rounds=4
 
 
 train_space_sec=15
@@ -92,6 +92,59 @@ train_space_sec=15
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+helper_expire=20260916061848
 
 
 

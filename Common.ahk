@@ -22,6 +22,7 @@ global clientH := 0
 global running := false
 global keyboardId := 1
 global mouseID := 11
+global AHI := ""
 
 GetKeySC(keyName) {
     ; AHI 延伸鍵須用壓縮掃描碼（base + 256）；MapVirtualKey 常拿不到 E0，Up 會變成 8
@@ -152,8 +153,15 @@ SleepCheck(ms) {
     return running
 }
 
+HasAHI() {
+    global AHI
+    return AHI is Object
+}
+
 ReleaseAllKeys() {
     global keyboardId, AHI
+    if !HasAHI()
+        return
     for key in ["4", "5", "1", "2", "3", "6", "7", "8", "9", "0",
         "Up", "Down", "Left", "Right",
         "Ctrl", "Alt", "Shift", "Enter", "Escape", "Tab", "Space"] {
@@ -164,7 +172,7 @@ ReleaseAllKeys() {
 
 press(key, itv := 30, dly := 0) {
     global keyboardId, running, AHI
-    if !running
+    if !running || !HasAHI()
         return false
     sc := GetKeySC(key)
     AHI.SendKeyEvent(keyboardId, sc, 1)
