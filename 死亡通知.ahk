@@ -14,34 +14,37 @@ global scanMs := 500
 global notifyCount := 0
 global deathSeen := false
 global lastNotifyAt := ""
-global currentPhase := "待機"
+global currentPhase := "監看中"
 global lastWebhookOk := ""
 
 global infoText := "
 (
 【功能】
-循環找圖：有人死亡.bmp
+開啟後持續找圖：有人死亡.bmp
 找到就發 Discord 通知
 圖還在畫面上不會重複發
 圖消失後再出現才再通知
 
 【備註】
+開啟後自動監看
 cfg.txt 設定 discord_webhook=
 圖檔放 Lib\有人死亡.bmp
 )"
 global hotkeyText := "
 (
 【熱鍵】
-F7/F8 或下方按鈕
-F3 重載  Ctrl+Esc 關
+Ctrl+Z 開始
+Ctrl+X 暫停
+Ctrl+R 重載
+Ctrl+Esc 關閉
 )"
 
 InitApp()
 return
 
-F7::StartWatch()
-F8::StopWatch()
-F3::{
+^z::StartWatch()
+^x::StopWatch()
+^r::{
     StopWatch()
     Reload
 }
@@ -122,36 +125,18 @@ SendDiscord(content) {
 }
 
 StartWatch() {
-    global running, currentStatus, currentPhase, deathImg, deathSeen, notifyCount
+    global running, currentStatus, currentPhase, deathSeen
     if running
         return
-    if !FileExist(ImgPath(deathImg)) {
-        currentStatus := "找不到圖檔"
-        state()
-        FlashMsg("缺少 Lib\" . deathImg)
-        return
-    }
-    if GetWebhookUrl() == "" {
-        currentStatus := "未設定 webhook"
-        state()
-        FlashMsg("請在 cfg.txt 設定 discord_webhook=")
-        return
-    }
-    if !ActivateGame() {
-        currentStatus := "找不到遊戲視窗"
-        state()
-        FlashMsg("找不到希望視窗")
-        return
-    }
     deathSeen := false
     running := true
-    currentStatus := "運行中"
+    currentStatus := "持續監看"
     currentPhase := "監看中"
     SetTimer(WatchTick, scanMs)
     state()
 }
 
-StopWatch() {
+StopWatch(*) {
     global running, currentStatus, currentPhase
     running := false
     SetTimer(WatchTick, 0)
@@ -161,9 +146,29 @@ StopWatch() {
 }
 
 WatchTick(*) {
-    global running, deathImg, deathSeen, notifyCount, lastNotifyAt, currentPhase
+    global running, deathImg, deathSeen, notifyCount, lastNotifyAt, currentPhase, currentStatus
     if !running
         return
+    if !FileExist(ImgPath(deathImg)) {
+        if currentStatus != "找不到圖檔" {
+            currentStatus := "找不到圖檔"
+            currentPhase := "等待 Lib\" . deathImg
+            state()
+        }
+        return
+    }
+    if GetWebhookUrl() == "" {
+        if currentStatus != "未設定 webhook" {
+            currentStatus := "未設定 webhook"
+            currentPhase := "等待 cfg discord_webhook"
+            state()
+        }
+        return
+    }
+    if currentStatus != "持續監看" {
+        currentStatus := "持續監看"
+        state()
+    }
     found := SearchInGame(deathImg, &x, &y, "*30 ")
     if found {
         if deathSeen
@@ -213,6 +218,6 @@ state() {
 InitApp() {
     ini()
     BuildMacroPanel("死亡通知", infoText, hotkeyText, StartWatch, StopWatch)
-    state()
+    StartWatch()
     SetTimer(RefreshGamePos, 500)
 }
