@@ -32,16 +32,14 @@ global infoText := "
 global hotkeyText := "
 (
 【熱鍵】
-F1/F2 或下方按鈕
 Ctrl+R 開始  Ctrl+S 停止
+或下方按鈕
 F3 重載  Ctrl+Esc 關
 )"
 
 InitApp()
 return
 
-F1::StartMacro()
-F2::StopMacro()
 ^r::StartMacro()
 ^s::StopMacro()
 F3::{

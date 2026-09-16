@@ -1,6 +1,5 @@
-/*  吃小幫手 (AHI 版，獨立 timer)
- *  與其他巨集並行：12 小時倒數，剩 1 分鐘時按快捷 0
- *  到期時間寫入 cfg.txt，重載／關再開仍接續
+/*  綜合輔助：吃小幫手 + 死亡通知
+ *  幫手 Ctrl+Z/X；死亡 Alt+Z/X 啟動／暫停（不自動開）
  */
 #Requires AutoHotkey v2.0
 #Include Lib\AutoHotInterception.ahk
@@ -10,6 +9,7 @@
 global AHI := AutoHotInterception()
 LoadCommonCfg()
 
+; ── 吃小幫手 ──
 global helperHours := 12
 global eatRemainSec := 60
 global helperExpire := ""
@@ -33,22 +33,40 @@ global activateWaitMs := 1500
 global eatLogPath := A_ScriptDir "\吃小幫手_log.txt"
 global helperWarnSent := false
 
+; ── 死亡通知（獨立開關，不共用 running）──
+global deathImg := "血條"
+global deathImgVar := 20
+global scanMs := 500
+global notifyCount := 0
+global deathSeen := false
+global lastNotifyAt := ""
+global deathRunning := false
+global deathStatus := "待機"
+global deathPhase := "待機"
+global hitScansNeeded := 3
+global clearScansNeeded := 20
+global notifyCooldownMs := 120000
+global hitScans := 0
+global clearScans := 0
+global lastNotifyTick := 0
+
 global infoText := "
 (
 【功能】
-12 小時倒數，剩 1 分鐘自動喝
-啟動先喝一次並開始倒數
+幫手：12 小時倒數，剩 1 分鐘自動喝
+死亡：找血條，確認後發 DC
 
 【備註】
 快捷 0 放藥水；喝前後 F2/F1
-啟動必開小幫手；誤吃會處理
-Ctrl+1 不喝，只開小幫手
-DC：啟動喝到／該吃／已吃
+啟動幫手必開小幫手
+Ctrl+1 不喝只開幫手
+設定要勾[狀態資訊]
 )"
 global hotkeyText := "
 (
 【熱鍵】
-Ctrl+Z 開始  Ctrl+X 停止
+Ctrl+Z 幫手開始  Ctrl+X 停
+Alt+Z 死亡開始  Alt+X 停
 F4 現在喝  Ctrl+1 只開幫手
 Ctrl+F3 重載  Ctrl+Esc 關
 )"
@@ -58,17 +76,22 @@ return
 
 ^z::StartHelper()
 ^x::StopHelper()
-^F3::{
-    StopHelper()
-    Reload
-}
+!z::StartWatch()
+!x::StopWatch()
 F4::DrinkNow()
 ^1::StartHelperMenuOnly()
+^F3::{
+    StopHelper()
+    StopWatch()
+    Reload
+}
 ^Esc::ExitApp
 
 OnExit(*) {
     StopHelper()
+    StopWatch()
     SetTimer(HelperTick, 0)
+    SetTimer(WatchTick, 0)
     SetTimer(RefreshGamePos, 0)
 }
 
@@ -119,7 +142,6 @@ StartHelper() {
 
     EatHelper("啟動先喝一次")
 
-    ; 喝成功會重設 12 小時；失敗時也要有到期時間，避免每秒重複喝
     if !IsValidStamp(helperExpire) {
         ResetExpireFromNow()
         currentPhase := "沒喝到，先假設滿 12 小時"
@@ -224,7 +246,6 @@ HandleWrongEat(forceStart := false) {
     if !SleepCheck(300)
         return false
 
-    ; 啟動第一次不論有沒有誤吃都要開幫手；其他情況沒誤吃就結束
     if !forceStart && !WaitWrongEatAppear(wrongEatAppearMs)
         return running
 
@@ -404,7 +425,6 @@ PressEatKey() {
     return false
 }
 
-; 用 AHI 從驅動層送，AHK 的 Send 會被其他腳本的熱鍵忽略
 SendTrainKey(key) {
     global trainKeyHoldMs, trainKeyGapMs
     EnsureGameActive()
@@ -472,7 +492,6 @@ EatHelper(reason := "自動喝") {
         MouseUp()
 
     if running && SendTrainResume() {
-        ; 練功已恢復，但誤吃可能因 lag 才跳出，再確認一次
         if WaitWrongEatAppear(lateWrongEatMs, "復原後再確認誤吃") {
             if SendTrainStop() {
                 ok := HandleWrongEat()
@@ -518,31 +537,155 @@ NotifyHelperDc(text) {
     LogEat((dcOk ? "DC 已送出" : "DC 未送出：" lastWebhookOk) "  " text)
 }
 
+StartWatch() {
+    global deathRunning, deathStatus, deathPhase, deathSeen, hitScans, clearScans
+    if deathRunning
+        return
+    deathSeen := false
+    hitScans := 0
+    clearScans := 0
+    deathRunning := true
+    deathStatus := "持續監看"
+    deathPhase := "監看中"
+    SetTimer(WatchTick, scanMs)
+    state()
+}
+
+StopWatch(*) {
+    global deathRunning, deathStatus, deathPhase
+    deathRunning := false
+    SetTimer(WatchTick, 0)
+    deathStatus := "已暫停"
+    deathPhase := "待機"
+    state()
+}
+
+WatchTick(*) {
+    global deathRunning, deathImg, deathSeen, notifyCount, lastNotifyAt
+    global deathPhase, deathStatus, deathImgVar
+    global hitScans, clearScans, hitScansNeeded, clearScansNeeded, notifyCooldownMs, lastNotifyTick
+    if !deathRunning
+        return
+    if !FileExist(ImgPath(deathImg)) {
+        if deathStatus != "找不到圖檔" {
+            deathStatus := "找不到圖檔"
+            deathPhase := "等待 Lib\" . deathImg
+            state()
+        }
+        return
+    }
+    if GetWebhookUrl() == "" {
+        if deathStatus != "未設定 webhook" {
+            deathStatus := "未設定 webhook"
+            deathPhase := "等待 cfg discord_webhook"
+            state()
+        }
+        return
+    }
+    if deathStatus != "持續監看" {
+        deathStatus := "持續監看"
+        state()
+    }
+    found := SearchInGame(deathImg, &x, &y, "*" deathImgVar " ")
+    if found {
+        clearScans := 0
+        if deathSeen
+            return
+        hitScans++
+        if hitScans < hitScansNeeded {
+            deathPhase := "疑似死亡 " hitScans "/" hitScansNeeded
+            state()
+            return
+        }
+        if A_TickCount - lastNotifyTick < notifyCooldownMs {
+            deathPhase := "冷卻中，不重複通知"
+            state()
+            return
+        }
+        deathSeen := true
+        deathPhase := "確認死亡，發送 DC"
+        state()
+        stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+        msg := "【希望戀曲】偵測到死亡（血條）  " stamp
+        if SendDiscord(msg) {
+            notifyCount++
+            lastNotifyAt := stamp
+            lastNotifyTick := A_TickCount
+            deathPhase := "已通知 Discord"
+        } else {
+            deathPhase := "DC 發送失敗"
+            deathSeen := false
+            hitScans := 0
+        }
+        state()
+        return
+    }
+    hitScans := 0
+    if !deathSeen
+        return
+    clearScans++
+    if clearScans < clearScansNeeded {
+        deathPhase := "已復活 " clearScans "/" clearScansNeeded
+        state()
+        return
+    }
+    deathSeen := false
+    clearScans := 0
+    deathPhase := "監看中"
+    state()
+}
+
 state() {
     global currentStatus, currentPhase, helperHours, eatRemainSec
     global win_width, win_height, winPosSet, clientW, clientH, running
     global helperExpire, lastWebhookOk
+    global deathStatus, deathPhase, notifyCount, lastNotifyAt, deathImg, deathRunning
 
     posInfo := winPosSet
-        ? "視窗: " win_width "x" win_height "  客戶區: " clientW "x" clientH
+        ? "視窗: " win_width "x" win_height
         : "視窗: 尚未定位"
     remainInfo := IsValidStamp(helperExpire)
         ? "剩餘: " FormatRemain(RemainSec())
         : "剩餘: 尚未計時"
+    lastInfo := lastNotifyAt != "" ? lastNotifyAt : "尚無"
+    hookInfo := lastWebhookOk != "" ? lastWebhookOk : (GetWebhookUrl() != "" ? "已設定" : "未設定")
 
-    SetStatusText("【現況】`r`n"
-        . "週期: " helperHours " 小時  提前: " eatRemainSec " 秒`r`n"
-        . remainInfo "`r`n"
-        . "狀態: " currentStatus "`r`n"
-        . "階段: " currentPhase "`r`n"
-        . "DC: " (lastWebhookOk != "" ? lastWebhookOk : (GetWebhookUrl() != "" ? "已設定" : "未設定")) "`r`n"
+    SetStatusText("【幫手】 " (running ? "開" : "關") "`r`n"
+        . remainInfo "  " currentStatus "`r`n"
+        . currentPhase "`r`n"
+        . "【死亡】 " (deathRunning ? "開" : "關") "  " deathImg "`r`n"
+        . deathStatus " / " deathPhase "`r`n"
+        . "已通知 " notifyCount "  上次 " lastInfo "`r`n"
+        . "DC: " hookInfo "`r`n"
         . posInfo)
 }
 
 InitApp() {
+    global panelGui, statusEdit
     LoadHelperExpire()
     ini()
-    BuildMacroPanel("吃小幫手", infoText, hotkeyText, StartHelper, StopHelper)
+
+    if IsObject(panelGui)
+        panelGui.Destroy()
+    panelGui := Gui("+AlwaysOnTop +Caption -MaximizeBox -MinimizeBox -DPIScale", "綜合輔助")
+    panelGui.SetFont("s8", "Microsoft JhengHei UI")
+    panelGui.BackColor := "FFFFE0"
+    panelGui.MarginX := 8
+    panelGui.MarginY := 6
+    panelGui.AddText("w158 Center", "綜合輔助").SetFont("s9 Bold")
+    panelGui.AddText("w158", infoText)
+    statusEdit := panelGui.AddEdit("w158 h110 ReadOnly -Wrap", "")
+    panelGui.AddText("w158", hotkeyText)
+    b1 := panelGui.AddButton("w75 h26", "幫手開始")
+    b2 := panelGui.AddButton("x+8 w75 h26", "幫手停止")
+    b3 := panelGui.AddButton("xm w75 h26", "死亡開始")
+    b4 := panelGui.AddButton("x+8 w75 h26", "死亡停止")
+    b1.OnEvent("Click", (*) => StartHelper())
+    b2.OnEvent("Click", (*) => StopHelper())
+    b3.OnEvent("Click", (*) => StartWatch())
+    b4.OnEvent("Click", (*) => StopWatch())
+    panelGui.OnEvent("Close", (*) => ExitApp())
+    ShowMacroPanel()
     state()
     SetTimer(RefreshGamePos, 500)
 }

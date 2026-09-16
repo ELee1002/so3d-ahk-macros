@@ -1,5 +1,5 @@
 /*  死亡通知
- *  偵測 Lib\有人死亡.bmp → Discord webhook 通知
+ *  偵測 Lib\血條（倒地血條）→ Discord webhook 通知
  *  可與練功／小幫手並行（熱鍵不用 F1/F2）
  */
 #Requires AutoHotkey v2.0
@@ -8,27 +8,34 @@
 
 LoadCommonCfg()
 
-global deathImg := "有人死亡.bmp"
-global imgVar := 30
+global deathImg := "血條"
+global imgVar := 20
 global scanMs := 500
 global notifyCount := 0
 global deathSeen := false
 global lastNotifyAt := ""
 global currentPhase := "監看中"
 global lastWebhookOk := ""
+global hitScansNeeded := 3
+global clearScansNeeded := 20
+global notifyCooldownMs := 120000
+global hitScans := 0
+global clearScans := 0
+global lastNotifyTick := 0
 
 global infoText := "
 (
 【功能】
-開啟後持續找圖：有人死亡.bmp
-找到就發 Discord 通知
-圖還在畫面上不會重複發
-圖消失後再出現才再通知
+開啟後持續找圖：血條
+連續找到 3 次才當死亡
+發過後要消失 10 秒才重新武裝
+兩次通知至少間隔 2 分鐘
 
 【備註】
 開啟後自動監看
+設定要勾[狀態資訊]
 cfg.txt 設定 discord_webhook=
-圖檔放 Lib\有人死亡.bmp
+圖檔放 Lib\血條（倒地才對得上）
 )"
 global hotkeyText := "
 (
@@ -86,49 +93,13 @@ SearchInGame(name, &outX, &outY, variation := "") {
     return false
 }
 
-GetWebhookUrl() {
-    url := read("discord_webhook", 0)
-    url := Trim(url)
-    if url == "" || !InStr(url, "https://")
-        return ""
-    return url
-}
-
-JsonEscape(s) {
-    s := StrReplace(s, "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`r", "")
-    s := StrReplace(s, "`n", "\n")
-    return s
-}
-
-SendDiscord(content) {
-    global lastWebhookOk
-    url := GetWebhookUrl()
-    if url == "" {
-        lastWebhookOk := "未設定 webhook"
-        return false
-    }
-    body := '{"content":"' JsonEscape(content) '"}'
-    try {
-        http := ComObject("WinHttp.WinHttpRequest.5.1")
-        http.Open("POST", url, false)
-        http.SetRequestHeader("Content-Type", "application/json")
-        http.Send(body)
-        code := Integer(http.Status)
-        lastWebhookOk := (code >= 200 && code < 300) ? "已送出" : "HTTP " code
-        return code >= 200 && code < 300
-    } catch as e {
-        lastWebhookOk := "送出失敗"
-        return false
-    }
-}
-
 StartWatch() {
-    global running, currentStatus, currentPhase, deathSeen
+    global running, currentStatus, currentPhase, deathSeen, hitScans, clearScans
     if running
         return
     deathSeen := false
+    hitScans := 0
+    clearScans := 0
     running := true
     currentStatus := "持續監看"
     currentPhase := "監看中"
@@ -146,7 +117,8 @@ StopWatch(*) {
 }
 
 WatchTick(*) {
-    global running, deathImg, deathSeen, notifyCount, lastNotifyAt, currentPhase, currentStatus
+    global running, deathImg, deathSeen, notifyCount, lastNotifyAt, currentPhase, currentStatus, imgVar
+    global hitScans, clearScans, hitScansNeeded, clearScansNeeded, notifyCooldownMs, lastNotifyTick
     if !running
         return
     if !FileExist(ImgPath(deathImg)) {
@@ -169,31 +141,54 @@ WatchTick(*) {
         currentStatus := "持續監看"
         state()
     }
-    found := SearchInGame(deathImg, &x, &y, "*30 ")
+    found := SearchInGame(deathImg, &x, &y, "*" imgVar " ")
     if found {
+        clearScans := 0
         if deathSeen
             return
+        hitScans++
+        if hitScans < hitScansNeeded {
+            currentPhase := "疑似死亡 " hitScans "/" hitScansNeeded
+            state()
+            return
+        }
+        if A_TickCount - lastNotifyTick < notifyCooldownMs {
+            currentPhase := "冷卻中，不重複通知"
+            state()
+            return
+        }
         deathSeen := true
-        currentPhase := "偵測到死亡，發送 DC"
+        currentPhase := "確認死亡，發送 DC"
         state()
         stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-        msg := "【希望戀曲】偵測到有人死亡  " stamp
+        msg := "【希望戀曲】偵測到死亡（血條）  " stamp
         if SendDiscord(msg) {
             notifyCount++
             lastNotifyAt := stamp
+            lastNotifyTick := A_TickCount
             currentPhase := "已通知 Discord"
         } else {
             currentPhase := "DC 發送失敗"
             deathSeen := false
+            hitScans := 0
         }
         state()
         return
     }
-    if deathSeen {
-        deathSeen := false
-        currentPhase := "監看中"
+    hitScans := 0
+    if !deathSeen
+        return
+    ; 復活瞬間血條可能閃現，要連續消失一段時間才重新武裝
+    clearScans++
+    if clearScans < clearScansNeeded {
+        currentPhase := "已復活 " clearScans "/" clearScansNeeded
         state()
+        return
     }
+    deathSeen := false
+    clearScans := 0
+    currentPhase := "監看中"
+    state()
 }
 
 state() {

@@ -206,6 +206,46 @@ LoadCommonCfg() {
     shfitY := readNum("shiftY", 35)
 }
 
+global lastWebhookOk := ""
+
+GetWebhookUrl() {
+    url := read("discord_webhook", 0)
+    url := Trim(url)
+    if url == "" || !InStr(url, "https://")
+        return ""
+    return url
+}
+
+JsonEscape(s) {
+    s := StrReplace(s, "\", "\\")
+    s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`r", "")
+    s := StrReplace(s, "`n", "\n")
+    return s
+}
+
+SendDiscord(content) {
+    global lastWebhookOk
+    url := GetWebhookUrl()
+    if url == "" {
+        lastWebhookOk := "未設定 webhook"
+        return false
+    }
+    body := '{"content":"' JsonEscape(content) '"}'
+    try {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.Open("POST", url, false)
+        http.SetRequestHeader("Content-Type", "application/json")
+        http.Send(body)
+        code := Integer(http.Status)
+        lastWebhookOk := (code >= 200 && code < 300) ? "已送出" : "HTTP " code
+        return code >= 200 && code < 300
+    } catch {
+        lastWebhookOk := "送出失敗"
+        return false
+    }
+}
+
 ; ── 標準 GUI 模板（單一視窗：功能/備註 + 現況 + 開始/停止）──
 
 global panelGui := ""
