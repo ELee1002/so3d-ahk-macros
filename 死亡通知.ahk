@@ -35,6 +35,7 @@ global infoText := "
 開啟後自動監看
 設定要勾[狀態資訊]
 cfg.txt 設定 discord_webhook=
+cfg.txt 設定 discord_name=角色名（通知會顯示）
 圖檔放 Lib\血條（倒地才對得上）
 )"
 global hotkeyText := "
@@ -161,7 +162,7 @@ WatchTick(*) {
         currentPhase := "確認死亡，發送 DC"
         state()
         stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-        msg := "【希望戀曲】偵測到死亡（血條）  " stamp
+        msg := FormatDiscordMsg("偵測到死亡（血條）")
         if SendDiscord(msg) {
             notifyCount++
             lastNotifyAt := stamp

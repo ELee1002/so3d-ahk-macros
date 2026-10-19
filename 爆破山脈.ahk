@@ -39,7 +39,7 @@ InitTrainCfg() {
 
     spamSec := 15
     press2Count := 3
-    spamInterval := 10
+    spamInterval := 300
     spaceEveryN := Max(1, readNum("train_space_rounds", 5))
     spaceSec := Max(1, readNum("train_space_sec", 3))
     loopCount := 0
@@ -356,7 +356,7 @@ state() {
         : "視窗: 尚未定位"
 
     SetStatusText("【現況】`r`n"
-        . "設定: 1 連打 " spamSec " 秒 → 2 x" press2Count "`r`n"
+        . "設定: 每 0.3 秒按 1 共 " spamSec " 秒 → 2 x" press2Count "`r`n"
         . "每 " spaceEveryN " 輪 → 連按空白 " spaceSec " 秒`r`n"
         . "狀態: " currentStatus "`r`n"
         . "階段: " currentPhase "`r`n"

@@ -58,9 +58,11 @@ global infoText := "
 
 【備註】
 快捷 0 放藥水；喝前後 F2/F1
+按 0 後等 Lib\1P 出現才繼續
 啟動幫手必開小幫手
 Ctrl+1 不喝只開幫手
 設定要勾[狀態資訊]
+cfg discord_name=角色名（DC 會顯示）
 )"
 global hotkeyText := "
 (
@@ -241,13 +243,38 @@ WaitWrongEatAppear(timeoutMs, label := "等誤吃") {
     return false
 }
 
+; 按 0 後等 1P 出現才算喝到；沒出現就一直等（停幫手才中斷）
+WaitEat1PAppear() {
+    global currentPhase, running
+    LogEat("開始等 1P")
+    while running {
+        currentPhase := "等 1P 確認"
+        state()
+        if SearchInGame("1P", &px, &py) {
+            LogEat("已偵測到 1P")
+            currentPhase := "已偵測 1P"
+            state()
+            return true
+        }
+        if !SleepCheck(200)
+            return false
+    }
+    LogEat("等 1P 被停止")
+    return false
+}
+
 HandleWrongEat(forceStart := false) {
     global currentPhase, wrongEatTimeoutMs, wrongEatAppearMs
     if !SleepCheck(300)
         return false
 
-    if !forceStart && !WaitWrongEatAppear(wrongEatAppearMs)
-        return running
+    ; 先等誤吃結果出來再進選單，否則慢的機器會變成「先開幫手、誤吃才跳出」
+    sawWrongEat := WaitWrongEatAppear(wrongEatAppearMs)
+    if !sawWrongEat {
+        if !forceStart
+            return running
+        LogEat("沒跳誤吃，啟動仍要開幫手")
+    }
 
     deadline := A_TickCount + wrongEatTimeoutMs
     useAltConfirm := false
@@ -480,12 +507,17 @@ EatHelper(reason := "自動喝") {
 
     ok := PressEatKey()
     if ok {
-        ResetExpireFromNow()
-        lastRemainDisp := -1
-        LogEat("已重算 12 小時，到期 " helperExpire)
-        NotifyHelperDc(InStr(reason, "啟動") ? "小幫手已吃開始倒數" : "小幫手已吃")
-        state()
-        ok := HandleWrongEat(InStr(reason, "啟動"))
+        if WaitEat1PAppear() {
+            ResetExpireFromNow()
+            lastRemainDisp := -1
+            LogEat("已重算 12 小時，到期 " helperExpire)
+            NotifyHelperDc(InStr(reason, "啟動") ? "小幫手已吃開始倒數" : "小幫手已吃")
+            state()
+            ok := HandleWrongEat(InStr(reason, "啟動"))
+        } else {
+            ok := false
+            LogEat("未等到 1P，不重算倒數、不發已吃 DC")
+        }
     }
 
     Loop 2
@@ -531,8 +563,7 @@ HelperTick(*) {
 
 NotifyHelperDc(text) {
     global lastWebhookOk
-    stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    msg := "【希望戀曲】" text "  " stamp
+    msg := FormatDiscordMsg(text)
     dcOk := SendDiscord(msg)
     LogEat((dcOk ? "DC 已送出" : "DC 未送出：" lastWebhookOk) "  " text)
 }
@@ -606,7 +637,7 @@ WatchTick(*) {
         deathPhase := "確認死亡，發送 DC"
         state()
         stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-        msg := "【希望戀曲】偵測到死亡（血條）  " stamp
+        msg := FormatDiscordMsg("偵測到死亡（血條）")
         if SendDiscord(msg) {
             notifyCount++
             lastNotifyAt := stamp

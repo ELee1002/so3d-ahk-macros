@@ -18,7 +18,7 @@ global infoText := "
 1. 連打 1 → 按 2 x3 循環
 2. 每 N 輪連按空白 X 秒
 3. 空白階段偵測滿包/包不足 → 自動丟山脈雜物
-   （包不足會先等 5 秒再丟）
+   （滿包會發 DC；包不足會先等 5 秒再丟）
 4. 丟完後 3 分 30 秒完全暫停再繼續
 5. 【test】冷卻期間偵測綠袋子並點擊
 
@@ -94,7 +94,7 @@ InitAllCfg() {
 
     spamSec := 15
     press2Count := 3
-    spamInterval := 10
+    spamInterval := 300
     spaceEveryN := Max(1, readNum("train_space_rounds", 5))
     spaceSec := Max(1, readNum("train_space_sec", 3))
     loopCount := 0
@@ -934,6 +934,8 @@ TryDropDuringSpace() {
     trainPhase := "drop"
     SetDropPhase(dropReason " → 準備丟垃圾")
     SetTimer(TrainTick, 0)
+    if dropReason == "滿包"
+        SendDiscord(FormatDiscordMsg("滿包了"))
 
     if dropReason == "包不足" {
         if !WaitBeforeBagShortDrop() {
@@ -1198,7 +1200,7 @@ state() {
         . "階段: " currentPhase "`r`n"
         . "練功: " loopCount " 輪  丟垃圾: " dropCount " 次`r`n"
         . "────────────────`r`n"
-        . "設定: 1 連打 " spamSec " 秒 → 2 x" press2Count "`r`n"
+        . "設定: 每 0.3 秒按 1 共 " spamSec " 秒 → 2 x" press2Count "`r`n"
         . "每 " spaceEveryN " 輪 → 空白 " spaceSec " 秒`r`n"
         . "test: 冷卻中偵測綠袋子`r`n"
         . posInfo)

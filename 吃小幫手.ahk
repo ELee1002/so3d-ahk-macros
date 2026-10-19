@@ -224,9 +224,13 @@ HandleWrongEat(forceStart := false) {
     if !SleepCheck(300)
         return false
 
-    ; 啟動第一次不論有沒有誤吃都要開幫手；其他情況沒誤吃就結束
-    if !forceStart && !WaitWrongEatAppear(wrongEatAppearMs)
-        return running
+    ; 先等誤吃結果出來再進選單，否則慢的機器會變成「先開幫手、誤吃才跳出」
+    sawWrongEat := WaitWrongEatAppear(wrongEatAppearMs)
+    if !sawWrongEat {
+        if !forceStart
+            return running
+        LogEat("沒跳誤吃，啟動仍要開幫手")
+    }
 
     deadline := A_TickCount + wrongEatTimeoutMs
     useAltConfirm := false
@@ -512,8 +516,7 @@ HelperTick(*) {
 
 NotifyHelperDc(text) {
     global lastWebhookOk
-    stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    msg := "【希望戀曲】" text "  " stamp
+    msg := FormatDiscordMsg(text)
     dcOk := SendDiscord(msg)
     LogEat((dcOk ? "DC 已送出" : "DC 未送出：" lastWebhookOk) "  " text)
 }

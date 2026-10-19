@@ -216,6 +216,18 @@ GetWebhookUrl() {
     return url
 }
 
+; cfg.txt：discord_name=角色名（多開時用來區分是誰的通知）
+GetDiscordName() {
+    return Trim(read("discord_name", 0))
+}
+
+; 例：discord_name=小明 → 【希望戀曲】小明偵測到死亡（血條）  時間
+FormatDiscordMsg(text) {
+    who := GetDiscordName()
+    stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+    return "【希望戀曲】" who text "  " stamp
+}
+
 JsonEscape(s) {
     s := StrReplace(s, "\", "\\")
     s := StrReplace(s, '"', '\"')
