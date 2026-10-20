@@ -4,13 +4,13 @@ shiftX=7
 shiftY=35
 heal_interval=5
 heal_count=9
-shout_interval=5
+shout_interval=10
 drop_delay=50
 release_delay=50
 bag_minX=80
 bag_minY=80
 discord_webhook=https://discordapp.com/api/webhooks/1549369911187603466/jyfYBpBuVt30lUNAVjT92Wi1WEKi_DCxBNvH66oax0k8nYL2pZgfypBvO48WkMKKf_Sa
-
+discord_name=公司電腦
 
 
 
@@ -144,7 +144,7 @@ train_space_sec=15
 
 
 
-helper_expire=20260916061848
+helper_expire=20260917112855
 
 
 
@@ -160,6 +160,30 @@ helper_expire=20260916061848
 
 
 train_after2_ms=1000
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
