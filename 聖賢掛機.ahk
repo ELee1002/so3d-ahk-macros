@@ -34,7 +34,7 @@ global hotkeyText := "
 【熱鍵】
 Ctrl+R 開始  Ctrl+S 停止
 或下方按鈕
-F3 重載  Ctrl+Esc 關
+Ctrl+F3 重載  Ctrl+Esc 關
 )"
 
 InitApp()
@@ -42,7 +42,7 @@ return
 
 ^r::StartMacro()
 ^s::StopMacro()
-F3::{
+^F3::{
     StopMacro()
     Reload
 }
